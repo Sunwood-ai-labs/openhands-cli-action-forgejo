@@ -1,0 +1,295 @@
+name: Claude Code (Working on Forgejo)
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))) ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.body, '@claude'))
+    runs-on: docker
+    container:
+      image: ubuntu:latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      TZ: Asia/Tokyo
+    
+    steps:
+      - name: Install dependencies
+        run: |
+          echo 'tzdata tzdata/Areas select Asia' | debconf-set-selections
+          echo 'tzdata tzdata/Zones/Asia select Tokyo' | debconf-set-selections
+          ln -sf /usr/share/zoneinfo/Asia/Tokyo /etc/localtime
+          echo 'Asia/Tokyo' > /etc/timezone
+          
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y tzdata git curl unzip wget ca-certificates jq
+          
+          # Node.js 20をインストール
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+          DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+          
+          # Bun インストール
+          curl -fsSL https://bun.sh/install | bash
+          export PATH="$HOME/.bun/bin:$PATH"
+          echo "PATH=$HOME/.bun/bin:$PATH" >> $GITHUB_ENV
+          
+          echo "✅ Dependencies installed successfully"
+          node --version
+          npm --version
+          bun --version
+
+      - name: Add eyes reaction to indicate processing started
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CLAUDE_BOT_TOKEN || secrets.GITHUB_TOKEN }}  # カスタムトークン優先
+          script: |
+            console.log('👀 Adding eyes reaction to indicate processing started...');
+            
+            try {
+              if (context.eventName === 'issue_comment') {
+                // コメントにリアクション追加
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: 'eyes'
+                });
+                console.log('✅ Added eyes reaction to comment');
+              } else if (context.eventName === 'issues') {
+                // イシューにリアクション追加
+                await github.rest.reactions.createForIssue({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.issue.number,
+                  content: 'eyes'
+                });
+                console.log('✅ Added eyes reaction to issue');
+              } else if (context.eventName === 'pull_request') {
+                // プルリクエストにリアクション追加
+                await github.rest.reactions.createForIssue({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  content: 'eyes'
+                });
+                console.log('✅ Added eyes reaction to pull request');
+              }
+            } catch (error) {
+              console.log('⚠️ Failed to add reaction:', error.message);
+              // リアクション追加に失敗してもワークフローは続行
+            }
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract prompt from event
+        id: extract_prompt
+        run: |
+          echo "🔍 Extracting prompt from GitHub event..."
+          
+          case "${{ github.event_name }}" in
+            "issue_comment")
+              PROMPT_TEXT="${{ github.event.comment.body }}"
+              ISSUE_NUMBER="${{ github.event.issue.number }}"
+              ;;
+            "issues")
+              PROMPT_TEXT="${{ github.event.issue.body }}"
+              ISSUE_NUMBER="${{ github.event.issue.number }}"
+              ;;
+            "pull_request")
+              PROMPT_TEXT="${{ github.event.pull_request.body }}"
+              ISSUE_NUMBER="${{ github.event.pull_request.number }}"
+              ;;
+          esac
+          
+          # @claudeを除去して実際のプロンプトを抽出
+          CLEAN_PROMPT=$(echo "$PROMPT_TEXT" | sed 's/@claude//g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+          
+          # 空のプロンプトの場合はデフォルトメッセージを設定
+          if [ -z "$CLEAN_PROMPT" ]; then
+            CLEAN_PROMPT="こんにちは！どのようなお手伝いをしましょうか？このプロジェクトについて分析して、提案をお聞かせください。"
+          fi
+          
+          # プロンプトファイルを作成
+          mkdir -p /tmp/claude-prompts
+          echo "$CLEAN_PROMPT" > /tmp/claude-prompts/prompt.txt
+          
+          echo "📝 Extracted prompt:"
+          echo "$CLEAN_PROMPT"
+          echo "prompt_file=/tmp/claude-prompts/prompt.txt" >> $GITHUB_OUTPUT
+          echo "issue_number=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+
+      - name: Run Claude Code Base Action
+        id: claude
+        uses: anthropics/claude-code-base-action@main
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt_file: ${{ steps.extract_prompt.outputs.prompt_file }}
+          allowed_tools: "Bash(bun install),Bash(bun test),Bash(bun run format),Bash(bun typecheck),Edit,Replace,View,GlobTool,GrepTool,Write"
+          model: "claude-sonnet-4-20250514"
+          timeout_minutes: 30
+
+      - name: Create Pull Request if changes were made
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CLAUDE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { execSync } = require('child_process');
+            const fs = require('fs');
+            
+            // Claude の結果を取得
+            let claudeResult = "ファイルを更新しました";
+            const filePath = '/tmp/claude-execution-output.json';
+            
+            if (fs.existsSync(filePath)) {
+              try {
+                const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                if (Array.isArray(data)) {
+                  const resultItem = data.find(item => item.type === 'result');
+                  if (resultItem && resultItem.result) {
+                    claudeResult = resultItem.result;
+                  }
+                }
+              } catch (e) {
+                console.log('Could not read Claude result, using default');
+              }
+            }
+            
+            try {
+              // Git設定
+              execSync('git config --global user.name "Claude Assistant"');
+              execSync('git config --global user.email "claude-assistant@anthropic.com"');
+              
+              // 変更があるかチェック
+              const hasChanges = execSync('git status --porcelain', { encoding: 'utf8' }).trim();
+              
+              if (!hasChanges) {
+                console.log('📝 No changes detected, posting result without PR');
+                
+                // 変更がない場合は通常のコメントを投稿
+                const issueNumber = ${{ steps.extract_prompt.outputs.issue_number }};
+                await github.rest.issues.createComment({
+                  issue_number: issueNumber,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `## 🤖 Claude Bot からの回答\n\n${claudeResult}\n\n---\n*🤖 Claude Assistant | 実行時間: ${new Date().toLocaleString('ja-JP', {timeZone: 'Asia/Tokyo'})}*`
+                });
+                return;
+              }
+              
+              console.log('📋 Changes detected:');
+              console.log(hasChanges);
+              
+              // ブランチ名を生成（タイムスタンプ付き）
+              const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+              const branchName = `claude/auto-update-${timestamp}`;
+              
+              console.log(`🌿 Creating branch: ${branchName}`);
+              
+              // 新しいブランチを作成してチェックアウト
+              execSync(`git checkout -b ${branchName}`);
+              
+              // 変更をステージング
+              execSync('git add .');
+              
+              // コミット（Claudeの回答を使用）
+              const commitMessage = `🤖 Claude Assistant: ${claudeResult}`;
+              
+              execSync(`git commit -m "${commitMessage}"`);
+              console.log('📦 Changes committed');
+              
+              // ブランチをプッシュ
+              execSync(`git push origin ${branchName}`);
+              console.log('🚀 Branch pushed to remote');
+              
+              // プルリクエストを作成
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `🤖 Claude Assistant による自動更新`,
+                head: branchName,
+                base: 'main',
+                body: `## 🤖 Claude Assistant による自動更新\n\n${claudeResult}\n\n### 変更内容\n\`\`\`\n${hasChanges}\n\`\`\`\n\n---\n*このプルリクエストは Claude Assistant によって自動生成されました*`
+              });
+              
+              console.log(`✅ Pull Request created: #${pr.number}`);
+              console.log(`📍 URL: ${pr.html_url}`);
+              
+              // 元のイシュー/コメントにプルリクエストへのリンクを投稿
+              const issueNumber = ${{ steps.extract_prompt.outputs.issue_number }};
+              await github.rest.issues.createComment({
+                issue_number: issueNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `🎉 **変更完了！**\n\n${claudeResult}\n\n**プルリクエストを作成しました:** #${pr.number}\n\n👉 [プルリクエストを確認する](${pr.html_url})\n\n---\n*🤖 Claude Assistant | 実行時間: ${new Date().toLocaleString('ja-JP', {timeZone: 'Asia/Tokyo'})}*`
+              });
+              
+            } catch (error) {
+              console.error('❌ Error creating pull request:', error.message);
+              
+              // エラーの場合は通常の回答を投稿
+              const response = `${claudeResult}\n\n⚠️ プルリクエストの自動作成に失敗しました: ${error.message}`;
+              
+              const issueNumber = ${{ steps.extract_prompt.outputs.issue_number }};
+              await github.rest.issues.createComment({
+                issue_number: issueNumber,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🤖 Claude Bot からの回答\n\n${response}\n\n---\n*🤖 Claude Assistant | 実行時間: ${new Date().toLocaleString('ja-JP', {timeZone: 'Asia/Tokyo'})}*`
+              });
+            }
+
+      - name: Add completion reaction
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CLAUDE_BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            let status = "${{ steps.claude.outcome }}";
+            let reactionContent = status === 'success' ? '+1' : '-1';
+            
+            // 完了リアクションを追加
+            try {
+              if (context.eventName === 'issue_comment') {
+                await github.rest.reactions.createForIssueComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: context.payload.comment.id,
+                  content: reactionContent
+                });
+              } else if (context.eventName === 'issues') {
+                await github.rest.reactions.createForIssue({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.issue.number,
+                  content: reactionContent
+                });
+              } else if (context.eventName === 'pull_request') {
+                await github.rest.reactions.createForIssue({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  content: reactionContent
+                });
+              }
+              console.log(`✅ Added ${reactionContent} reaction for completion`);
+            } catch (error) {
+              console.log('⚠️ Failed to add completion reaction:', error.message);
+            }
