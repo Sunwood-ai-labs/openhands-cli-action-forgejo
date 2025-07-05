@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  oh-cli-dev:
+    build: .
+    volumes:
+      - ./:/app
+      - .openhands/settings.json:/root/.openhands/settings.json
+
+    tty: true
+    working_dir: /app

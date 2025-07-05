@@ -74,6 +74,26 @@ docker build -t openhands-action .
 ```
 
 ---
+### 5. docker-composeによる起動
+
+```bash
+docker-compose up -d --build
+```
+
+- サービス名は `docker-compose.yml` の `services:` で定義されています（デフォルト: `app`）。
+- サービス名を変更した場合は、下記コマンド例のサービス名も合わせて修正してください。
+
+### 6. コマンド例
+
+下記のコマンドで、コンテナ内でOpenHands CLIを実行できます（サービス名は適宜変更してください）:
+
+```bash
+docker-compose exec oh-cli-dev openhands -t "Create a file called test.txt with content 'Hello World'"
+```
+
+- サービス名が `app` の場合は `docker-compose exec app ...` に読み替えてください。
+
+---
 
 ## 📖 使い方
 
