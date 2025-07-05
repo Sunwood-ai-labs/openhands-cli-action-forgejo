@@ -1,4 +1,4 @@
-name: OpenHands Issue Resolver (forgejo)
+name: OpenHands Issue Resolver (forgejo, prebuilt image)
 
 on:
   issues:
@@ -37,25 +37,25 @@ jobs:
       )
     runs-on: docker
     container:
-      image: python:3.12-bookworm
-    
+      image: ghcr.io/sunwood-ai-labs/openhands-cli-action-forgejo/cli-action:latest
+
     permissions:
       contents: write
       pull-requests: write
       issues: write
-    
+
     steps:
-      - name: Install dependencies
+      - name: Add eyes reaction
         run: |
-          echo "🔧 Installing dependencies..."
-          apt-get update
-          apt-get install -y curl git jq ca-certificates
-          
-          # Node.js 20をインストール（actions/checkout@v4に必要）
-          curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-          apt-get install -y nodejs
-          
-          # uvをインストール
+          echo "👀 Adding eyes reaction..."
+          case "${{ github.event_name }}" in
+            "issue_comment")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions"
+              ;;
+            "issues")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/reactions"
+              ;;
+            "pull_request"|"pull_request_review"|"pull_request_review_comment")
           curl -LsSf https://astral.sh/uv/install.sh | sh
           
           # PATHを正しく設定
