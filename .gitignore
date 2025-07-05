@@ -1,3 +1,8 @@
 .SourceSageAssets/
 
 *.log
+.env
+.config/openhands/settings.json
+.openhands/settings.json
+scripts/hello.txt
+test.txt
