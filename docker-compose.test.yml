@@ -1,0 +1,99 @@
+version: '3.8'
+
+services:
+  openhands-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # container_name: openhands-cicd-test
+    volumes:
+      # プロジェクトディレクトリをCICDと同じ構造でマウント
+      - ./:/workspace/Sunwood-ai-labs/oh-demo-001/Sunwood-ai-labs/oh-demo-001
+      # 設定ファイル
+      - .openhands/settings.json:/root/.openhands/settings.json
+      - .openhands/config.toml:/workspace/config.toml
+      - /root/OpenHands:/root/OpenHands
+    environment:
+      # CICDと完全に同じ環境変数を設定
+      - ACT=true
+      - ACTIONS_CACHE_URL=http://172.19.0.7:39549/
+      - ACTIONS_RESULTS_URL=http://192.168.0.131:3000
+      - ACTIONS_RUNTIME_TOKEN=dummy_token
+      - ACTIONS_RUNTIME_URL=http://192.168.0.131:3000/api/actions_pipeline/
+      - ANTHROPIC_API_KEY=dummy_key
+      - CI=true
+      - GITEA_ACTIONS=true
+      - GITEA_ACTIONS_RUNNER_VERSION=v4.0.0
+      - GITHUB_ACTION=openhands
+      - GITHUB_ACTIONS=true
+      - GITHUB_ACTION_PATH=
+      - GITHUB_ACTION_REF=
+      - GITHUB_ACTION_REPOSITORY=
+      - GITHUB_ACTOR=maki
+      - GITHUB_API_URL=http://192.168.0.131:3000/api/v1
+      - GITHUB_BASE_REF=
+      - GITHUB_ENV=/var/run/act/workflow/envs.txt
+      - GITHUB_EVENT_NAME=issue_comment
+      - GITHUB_EVENT_PATH=/var/run/act/workflow/event.json
+      - GITHUB_GRAPHQL_URL=
+      - GITHUB_HEAD_REF=
+      - GITHUB_JOB=openhands-resolver
+      - GITHUB_OUTPUT=/var/run/act/workflow/outputcmd.txt
+      - GITHUB_PATH=/var/run/act/workflow/pathcmd.txt
+      - GITHUB_REF=refs/heads/main
+      - GITHUB_REF_NAME=main
+      - GITHUB_REF_TYPE=branch
+      - GITHUB_REPOSITORY=Sunwood-ai-labs/oh-demo-001
+      - GITHUB_REPOSITORY_OWNER=Sunwood-ai-labs
+      - GITHUB_RETENTION_DAYS=
+      - GITHUB_RUN_ID=119
+      - GITHUB_RUN_NUMBER=62
+      - GITHUB_SERVER_URL=http://192.168.0.131:3000
+      - GITHUB_SHA=f57e9f36e3970d22973717b0abe60d8a5830513e
+      - GITHUB_STATE=/var/run/act/workflow/statecmd.txt
+      - GITHUB_STEP_SUMMARY=/var/run/act/workflow/SUMMARY.md
+      - GITHUB_TOKEN=dummy_token
+      - GITHUB_WORKFLOW=OpenHands Issue Resolver (forgejo)
+      - GITHUB_WORKSPACE=/workspace/Sunwood-ai-labs/oh-demo-001
+      - GPG_KEY=7169605F62C751356D054A26A821E680E5FA6305
+      - HOME=/root
+      - HOSTNAME=daee604b0584
+      - ImageOS=docker
+      - JOB_CONTAINER_NAME=GITEA-ACTIONS-TASK-115_WORKFLOW-OpenHands-Issue-Resolver-forgejo_JOB-openhands-resolver
+      - LANG=C.UTF-8
+      - LLM_MODEL=anthropic/claude-sonnet-4-20250514
+      - MAX_ITERATIONS=30
+      - OLDPWD=/workspace/Sunwood-ai-labs/oh-demo-001/Sunwood-ai-labs
+      - PATH=/root/.local/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      - PWD=/workspace/Sunwood-ai-labs/oh-demo-001/Sunwood-ai-labs/oh-demo-001
+      - PYTHON_SHA256=c30bb24b7f1e9a19b11b55a546434f74e739bb4c271a3e3a80ff4380d49f7adb
+      - PYTHON_VERSION=3.12.11
+      - RUNNER_ARCH=X64
+      - RUNNER_OS=Linux
+      - RUNNER_PERFLOG=/dev/null
+      - RUNNER_TEMP=/tmp
+      - RUNNER_TOOL_CACHE=/opt/hostedtoolcache
+      - RUNNER_TRACKING_ID=
+      - SHLVL=1
+    tty: true
+    # stdin_open: false
+    working_dir: /workspace/Sunwood-ai-labs/oh-demo-001/Sunwood-ai-labs/oh-demo-001
+    # CICDでのエラーを再現するため、非対話的実行を模倣
+    # command: >
+    #   bash -c "
+    #     echo '🚀 Running OpenHands with task: おみくじアプリを作成して' &&
+    #     echo 'Cloning into oh-demo-001...' &&
+    #     echo '📁 Current directory: /workspace/Sunwood-ai-labs/oh-demo-001/Sunwood-ai-labs/oh-demo-001' &&
+    #     echo '📋 Directory contents:' &&
+    #     ls -la &&
+    #     echo '🌍 Environment variables:' &&
+    #     env | grep -E '^(ACT|CI|GITEA|GITHUB|ANTHROPIC|LLM|MAX|PWD|PYTHON)' | sort &&
+    #     echo '🔍 Forgejo workspace detection:' &&
+    #     echo 'GITHUB_WORKSPACE=/workspace/Sunwood-ai-labs/oh-demo-001' &&
+    #     echo 'CURRENT_DIR=/workspace/Sunwood-ai-labs/oh-demo-001/Sunwood-ai-labs/oh-demo-001' &&
+    #     echo '✅ Updated config:' &&
+    #     cat /root/.openhands/config.toml &&
+    #     echo 'Starting OpenHands...' &&
+    #     timeout 300 openhands -t 'おみくじアプリを作成して' || echo 'OpenHands execution completed or timed out'
+    # echo a | openhands -t 'おみくじアプリを作成して'
+    #   "
