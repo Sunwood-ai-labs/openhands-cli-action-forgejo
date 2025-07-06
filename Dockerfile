@@ -24,10 +24,8 @@ RUN git config --global user.name "OpenHands Agent" && \
     mkdir -p /root/.openhands && \
     :
 
-# OpenHands config をコピー
-COPY .openhands/config.toml /root/.openhands/config.toml
-
 ENV PATH="/root/.local/bin:${PATH}"
+ENV DEBUG=true
 
 RUN uv pip install --system openhands-ai
 

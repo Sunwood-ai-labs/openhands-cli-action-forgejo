@@ -6,3 +6,6 @@
 .openhands/settings.json
 scripts/hello.txt
 test.txt
+
+.openhands/config.toml
+workspace/config.toml
