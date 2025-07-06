@@ -1,0 +1,22 @@
+# config.toml
+
+[core]
+# Dockerを使わずにローカルのコマンドラインで実行する設定
+runtime = "cli"
+
+workspace_base = "./tmp/work"
+
+[llm]
+# モデル名を指定します。プロバイダー名（openai/）を含めてください。
+model = "openai/claude-sonnet-4-20250514"
+
+# APIキーを設定します。
+api_key = "sk-s-xxx"
+
+# APIリクエストを送信するベースURLを指定します。
+# これにより、デフォルトのOpenAIサーバーではなく指定したサーバーに接続します。
+base_url = "http://333.333.333.333:4001"
+
+# litellmがこのベースURLをOpenAI互換として扱うための設定
+# この設定がないと、モデル名からプロバイダーを推測しようとして失敗する可能性があります。
+custom_llm_provider = "openai"

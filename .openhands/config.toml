@@ -1,0 +1,2 @@
+[sandbox]
+trusted_dirs = [ "/workspace", "/prj", "/home", "/tmp", "/app" ]
