@@ -1,4 +1,4 @@
-name: OpenHands Issue Resolver (prebuilt image)
+name: OpenHands Issue Resolver (forgejo)
 
 on:
   issues:
@@ -37,22 +37,38 @@ jobs:
       )
     runs-on: docker
     container:
-      image: ghcr.io/sunwood-ai-labs/openhands-cli-action-forgejo/cli-action:latest
+      image: ghcr.io/sunwood-ai-labs/openhands-cli-action-forgejo/cli-action:20250706-082033
 
     permissions:
       contents: write
       pull-requests: write
       issues: write
-
+    
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - name: Verify environment
+        shell: bash
+        run: |
+          echo "🔧 Verifying pre-installed environment..."
+          echo "==========================================="
+          echo "🐍 Python version: $(python --version)"
+          echo "📦 Node.js version: $(node --version)"
+          echo "📋 NPM version: $(npm --version)"
+          echo "⚡ UV version: $(uv --version)"
+          echo "🌍 PATH: $PATH"
+          echo "👤 Git user: $(git config --global user.name)"
+          echo "📧 Git email: $(git config --global user.email)"
+          echo "📁 Current directory: $(pwd)"
+          echo "👥 Current user: $(whoami)"
+          echo "🗂️  Root config directory:"
+          ls -la /root/.config/openhands/ || echo "Config directory not found"
+          echo "==========================================="
+          echo "✅ Environment verification complete"
 
       - name: Add eyes reaction
+        shell: bash
         run: |
           echo "👀 Adding eyes reaction..."
+          
           case "${{ github.event_name }}" in
             "issue_comment")
               REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions"
@@ -64,6 +80,7 @@ jobs:
               REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/reactions"
               ;;
           esac
+          
           if [ -n "$REACTION_URL" ]; then
             curl -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
@@ -72,14 +89,16 @@ jobs:
               "$REACTION_URL" || echo "⚠️ Failed to add reaction"
           fi
 
-      - name: Run OpenHands CLI (headless)
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_MODEL: ${{ vars.LLM_MODEL || 'anthropic/claude-sonnet-4-20250514' }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run OpenHands
+        id: openhands
+        shell: bash
         run: |
-          echo "🚀 Running OpenHands CLI..."
-          # Issue/PR番号とタスク内容を特定
+          # Extract task content
           if [ -n "${{ github.event.pull_request.number }}" ]; then
             ISSUE_NUMBER="${{ github.event.pull_request.number }}"
             TASK_CONTENT="${{ github.event.pull_request.body }}"
@@ -91,59 +110,133 @@ jobs:
               TASK_CONTENT="${{ github.event.issue.body }}"
             fi
           fi
-
-          # @openhands-agentを除去してタスク内容をクリーンアップ
+          
+          # Clean task content
           CLEAN_TASK=$(echo "$TASK_CONTENT" | sed 's/@openhands-agent[^[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+          
           if [ -z "$CLEAN_TASK" ]; then
             CLEAN_TASK="Issue #${ISSUE_NUMBER}を解決してください"
           fi
-
-          echo "📝 Task: $CLEAN_TASK"
-
-          # OpenHands CLI 実行
-          openhands-cli --headless -t "$CLEAN_TASK" || OPENHANDS_EXIT_CODE=$?
-
-          # 変更があるかチェック
-          CHANGES=$(git status --porcelain)
-          if [ -n "$CHANGES" ]; then
-            echo "HAS_CHANGES=true" >> $GITHUB_ENV
-            echo "✅ OpenHands completed with changes"
+          
+          echo "🚀 Running OpenHands with task: $CLEAN_TASK"
+          
+          # Get current directory
+          CURRENT_DIR=$(pwd)
+          echo "📁 Current directory: $CURRENT_DIR"
+          
+          # Create unified config.toml in current directory
+          cat > /root/.openhands/config.toml << EOF
+          [core]
+          # Dockerを使わずにローカルのコマンドラインで実行する設定
+          runtime = "cli"
+          workspace_base = "${CURRENT_DIR}"
+          
+          [llm]
+          # モデル名を指定します。プロバイダー名（anthropic/）を含めてください。
+          model = "${LLM_MODEL}"
+          
+          # APIキーを設定します。
+          api_key = "${LITELLM_API_KEY}"
+          
+          # APIリクエストを送信するベースURLを指定します。
+          base_url = "${LLM_BASE_URL}"
+          
+          # litellmがこのベースURLをOpenAI互換として扱うための設定
+          custom_llm_provider = "${LLM_PROVIDER}"
+    
+          EOF
+          
+          echo "✅ Created unified config.toml in root directory:"
+          cat /root/.openhands/config.toml
+          
+          # Run OpenHands with Python module syntax
+          echo "🏃 Executing OpenHands..."
+          python -m openhands.core.main -t "$CLEAN_TASK" --config-file /root/.openhands/config.toml
+          
+          # Check for changes
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "HAS_CHANGES=true" >> $GITHUB_OUTPUT
+            echo "✅ Changes detected"
           else
-            echo "HAS_CHANGES=false" >> $GITHUB_ENV
-            echo "⚠️ OpenHands completed without changes"
+            echo "HAS_CHANGES=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No changes detected"
           fi
-          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> $GITHUB_ENV
+          
+          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
+        env:
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'openai/claude-sonnet-4-20250514' }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'http://192.168.0.121:4001' }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAX_ITERATIONS: ${{ vars.MAX_ITERATIONS || '30' }}
 
       - name: Create Pull Request
-        if: env.HAS_CHANGES == 'true'
+        if: steps.openhands.outputs.HAS_CHANGES == 'true'
+        id: create_pr
+        shell: bash
         run: |
           echo "🔧 Creating Pull Request..."
-          ISSUE_NUMBER="${ISSUE_NUMBER}"
+          
+          ISSUE_NUMBER="${{ steps.openhands.outputs.ISSUE_NUMBER }}"
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
           BRANCH_NAME="openhands/fix-issue-${ISSUE_NUMBER}-${TIMESTAMP}"
-
+          
+          echo "🔍 DEBUG: PR creation details"
+          echo "==========================================="
+          echo "🔢 Issue number: $ISSUE_NUMBER"
+          echo "🌿 Branch name: $BRANCH_NAME"
+          echo "⏰ Timestamp: $TIMESTAMP"
+          echo "📊 Git status before commit:"
+          git status
+          echo "==========================================="
+          
+          # 新しいブランチを作成してコミット
           git checkout -b "$BRANCH_NAME"
           git add .
           git commit -m "🤖 OpenHands: Fix for issue #${ISSUE_NUMBER}"
           git push origin "$BRANCH_NAME"
-
+          
+          echo "🔍 DEBUG: PR API call"
+          echo "==========================================="
+          PR_PAYLOAD="{\"title\":\"🤖 OpenHands: Fix for issue #${ISSUE_NUMBER}\",\"head\":\"${BRANCH_NAME}\",\"base\":\"main\",\"body\":\"🤖 OpenHands による自動修正\",\"draft\":true}"
+          echo "📋 PR payload: $PR_PAYLOAD"
+          echo "🔗 API URL: ${{ github.api_url }}/repos/${{ github.repository }}/pulls"
+          echo "==========================================="
+          
+          # シンプルなPR作成
           curl -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"title\":\"🤖 OpenHands: Fix for issue #${ISSUE_NUMBER}\",\"head\":\"${BRANCH_NAME}\",\"base\":\"main\",\"body\":\"🤖 OpenHands による自動修正\",\"draft\":true}" \
+            -d "$PR_PAYLOAD" \
             "${{ github.api_url }}/repos/${{ github.repository }}/pulls" > pr_response.json
-
+          
+          echo "🔍 DEBUG: PR response"
+          echo "==========================================="
+          cat pr_response.json
+          echo "==========================================="
+          
           PR_NUMBER=$(grep -o '"number":[0-9]*' pr_response.json | cut -d':' -f2 | head -1)
-          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
+          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_OUTPUT
           echo "✅ PR created: #${PR_NUMBER}"
 
       - name: Post results
+        if: always()
+        shell: bash
         run: |
           echo "📝 Posting results..."
-          ISSUE_NUMBER="${ISSUE_NUMBER}"
-          HAS_CHANGES="${HAS_CHANGES}"
-          PR_NUMBER="${PR_NUMBER}"
-
+          
+          ISSUE_NUMBER="${{ steps.openhands.outputs.ISSUE_NUMBER }}"
+          HAS_CHANGES="${{ steps.openhands.outputs.HAS_CHANGES }}"
+          PR_NUMBER="${{ steps.create_pr.outputs.PR_NUMBER }}"
+          
+          echo "🔍 DEBUG: Final results"
+          echo "==========================================="
+          echo "🔢 Issue number: $ISSUE_NUMBER"
+          echo "🔄 Has changes: $HAS_CHANGES"
+          echo "🔗 PR number: $PR_NUMBER"
+          echo "==========================================="
+          
           if [ "$HAS_CHANGES" = "true" ] && [ -n "$PR_NUMBER" ]; then
             COMMENT_BODY="🎉 OpenHands完了！ドラフトPR #${PR_NUMBER} を作成しました。"
           elif [ "$HAS_CHANGES" = "true" ]; then
@@ -151,7 +244,9 @@ jobs:
           else
             COMMENT_BODY="⚠️ OpenHandsを実行しましたが、変更は検出されませんでした。"
           fi
-
+          
+          echo "💬 Comment to post: $COMMENT_BODY"
+          
           curl -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
@@ -159,16 +254,20 @@ jobs:
             "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments"
 
       - name: Add completion reaction
+        if: always()
+        shell: bash
         run: |
           echo "🎯 Adding completion reaction..."
-          HAS_CHANGES="${HAS_CHANGES}"
-
-          if [ "$HAS_CHANGES" = "true" ]; then
+          
+          SUCCESS="${{ steps.openhands.outputs.RESOLUTION_SUCCESS }}"
+          HAS_CHANGES="${{ steps.openhands.outputs.HAS_CHANGES }}"
+          
+          if [ "$SUCCESS" = "true" ] && [ "$HAS_CHANGES" = "true" ]; then
             REACTION_CONTENT="+1"
           else
             REACTION_CONTENT="-1"
           fi
-
+          
           case "${{ github.event_name }}" in
             "issue_comment")
               REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions"
@@ -180,6 +279,7 @@ jobs:
               REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/reactions"
               ;;
           esac
+          
           if [ -n "$REACTION_URL" ]; then
             curl -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
