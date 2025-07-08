@@ -1,0 +1,523 @@
+name: OpenHands Issue Resolver Simulator (forgejo)
+
+on:
+  issues:
+    types: [opened, labeled, assigned]
+  pull_request:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  openhands-resolver:
+    if: |
+      github.event.label.name == 'fix-me' ||
+      github.event.label.name == 'fix-me-experimental' ||
+      (
+        ((github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+        contains(github.event.comment.body, vars.OPENHANDS_MACRO || '@openhands-agent')
+        ) ||
+        (github.event_name == 'pull_request_review' &&
+        contains(github.event.review.body, vars.OPENHANDS_MACRO || '@openhands-agent')
+        )
+      ) ||
+      (
+        github.event_name == 'issues' &&
+        github.event.action == 'opened' &&
+        contains(github.event.issue.body, vars.OPENHANDS_MACRO || '@openhands-agent')
+      ) ||
+      (
+        github.event_name == 'issues' &&
+        github.event.action == 'assigned' &&
+        github.event.assignee.login == 'openhands-agent'
+      )
+      
+    runs-on: docker
+    container:
+      image: ghcr.io/sunwood-ai-labs/openhands-cli-action-forgejo/cli-action:20250706-082033
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    
+    steps:
+      - name: Verify environment
+        shell: bash
+        run: |
+          echo "🔧 Verifying environment (Simulator Mode)..."
+          echo "==========================================="
+          echo "🐍 Python version: $(python --version)"
+          echo "📦 Node.js version: $(node --version)"
+          echo "📋 NPM version: $(npm --version)"
+          echo "🌍 PATH: $PATH"
+          echo "👤 Git user: $(git config --global user.name)"
+          echo "📧 Git email: $(git config --global user.email)"
+          echo "📁 Current directory: $(pwd)"
+          echo "👥 Current user: $(whoami)"
+          echo "==========================================="
+          echo "✅ Environment verification complete (Simulator)"
+
+      - name: Add eyes reaction
+        shell: bash
+        run: |
+          echo "👀 Adding eyes reaction..."
+          
+          case "${{ github.event_name }}" in
+            "issue_comment")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions"
+              ;;
+            "issues")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/reactions"
+              ;;
+            "pull_request"|"pull_request_review"|"pull_request_review_comment")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/reactions"
+              ;;
+          esac
+          
+          if [ -n "$REACTION_URL" ]; then
+            curl -s -f -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d '{"content":"eyes"}' \
+              "$REACTION_URL" || echo "⚠️ Failed to add reaction"
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      - name: Create work branch and prepare environment
+        id: prepare
+        env:
+          ISSUE_BODY_JSON: ${{ toJson(github.event.issue.body || '') }}
+          COMMENT_BODY_JSON: ${{ toJson(github.event.comment.body || '') }}
+          PR_BODY_JSON: ${{ toJson(github.event.pull_request.body || '') }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER_RAW: ${{ github.event.issue.number || github.event.pull_request.number }}
+        shell: bash
+        run: |
+          set -e
+
+          ISSUE_NUMBER="$ISSUE_NUMBER_RAW"
+
+          # ───── 本文をイベント種別ごとに取得 ─────
+          case "$EVENT_NAME" in
+            issue_comment) BODY_JSON="$COMMENT_BODY_JSON" ;;
+            pull_request|pull_request_review|pull_request_review_comment) BODY_JSON="$PR_BODY_JSON" ;;
+            *) BODY_JSON="$ISSUE_BODY_JSON" ;;
+          esac
+
+          # JSON → 生文字列に戻し、CRLF を除去
+          TASK_CONTENT=$(printf '%s\n' "$BODY_JSON" | jq -r . | tr -d '\r')
+
+          # macro を除去して整形
+          CLEAN_TASK=$(printf '%s' "$TASK_CONTENT" \
+            | sed 's/@openhands-agent[^[:space:]]*//' \
+            | sed 's/^[[:space:]]*//' \
+            | sed 's/[[:space:]]*$//')
+
+          [ -z "$CLEAN_TASK" ] && CLEAN_TASK="Issue #${ISSUE_NUMBER}を解決してください。"
+
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+          BRANCH_NAME="openhands/fix-issue-${ISSUE_NUMBER}-${TIMESTAMP}"
+
+          echo "🌿 Creating work branch: $BRANCH_NAME"
+          git checkout -b "$BRANCH_NAME"
+
+          ENHANCED_TASK="Issue #${ISSUE_NUMBER}の対応として、READMEファイルに修正内容を追加します。
+
+          注意：編集作業は Current directory: $(pwd) で行ってください。この場所でファイルを作成・編集してください。
+
+          Original task: ${CLEAN_TASK}"
+
+          echo "📝 Enhanced task: $ENHANCED_TASK"
+
+          echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "BRANCH_NAME=$BRANCH_NAME" >> "$GITHUB_OUTPUT"
+          {
+            echo "ENHANCED_TASK<<EOF"
+            echo "$ENHANCED_TASK"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post processing status comment
+        id: post_processing_comment
+        shell: bash
+        run: |
+          echo "⏳ Posting processing status comment..."
+          
+          ISSUE_NUMBER="${{ steps.prepare.outputs.ISSUE_NUMBER }}"
+          
+
+          PROCESSING_COMMENT="## 🚧 Pipeline Running...⏳✨
+
+          **処理中です。** しばらくお待ちください ☕️
+
+          ![](https://raw.githubusercontent.com/n3r4zzurr0/svg-spinners/refs/heads/main/svg-smil/blocks-shuffle-3.svg)"
+
+
+          # jqを使って安全にJSONペイロードを生成
+          JSON_PAYLOAD=$(jq -n \
+            --arg body "$PROCESSING_COMMENT" \
+            '{body: $body}')
+          
+          COMMENT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments")
+          
+          RESPONSE_BODY=$(echo "$COMMENT_RESPONSE" | sed '$d')
+          HTTP_CODE=$(echo "$COMMENT_RESPONSE" | tail -n1)
+          
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            COMMENT_ID=$(echo "$RESPONSE_BODY" | jq -r '.id')
+            echo "COMMENT_ID=${COMMENT_ID}" >> $GITHUB_OUTPUT
+            echo "✅ Processing comment posted with ID: ${COMMENT_ID}"
+          else
+            echo "⚠️ Failed to post processing comment. HTTP Status: $HTTP_CODE"
+            echo "COMMENT_ID=" >> $GITHUB_OUTPUT
+          fi
+
+
+      - name: Run OpenHands
+        id: openhands
+        shell: bash
+        run: |
+          echo "🚀 Running OpenHands..."
+          CURRENT_DIR=$(pwd)
+          
+          # JSON → 生文字列へ戻し、CRLF を除去
+          ENHANCED_TASK=$(printf '%s\n' "$ENHANCED_TASK_JSON" | jq -r . | tr -d '\r')
+          ISSUE_NUMBER="$ISSUE_NUMBER"
+          
+          mkdir -p /root/.openhands
+          cat > /root/.openhands/config.toml << EOF
+          [core]
+          runtime = "cli"
+          workspace_base = "${CURRENT_DIR}"
+          save_trajectory_path = "/root/.openhands/trajectories.json"
+          
+          [llm]
+          model = "${LLM_MODEL}"
+          api_key = "${LITELLM_API_KEY}"
+          base_url = "${LLM_BASE_URL}"
+          custom_llm_provider = "${LLM_PROVIDER}"
+          EOF
+          
+          echo "✅ Created config.toml:"
+          cat /root/.openhands/config.toml
+          
+          python -m openhands.core.main -t "$ENHANCED_TASK" --config-file /root/.openhands/config.toml
+          
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "HAS_CHANGES=true" >> $GITHUB_OUTPUT
+            echo "✅ Changes detected."
+          else
+            echo "HAS_CHANGES=false" >> $GITHUB_OUTPUT
+            echo "⚠️ No changes detected."
+          fi
+        env:
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LLM_MODEL: ${{ vars.LLM_MODEL || 'openai/claude-sonnet-4-20250514' }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL || 'http://192.168.0.121:4001' }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'openai' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAX_ITERATIONS: ${{ vars.MAX_ITERATIONS || '30' }}
+          ENHANCED_TASK_JSON: ${{ toJson(steps.prepare.outputs.ENHANCED_TASK) }}
+          ISSUE_NUMBER: ${{ steps.prepare.outputs.ISSUE_NUMBER }}
+
+      - name: Extract OpenHands Results
+        id: extract_results
+        if: always()
+        shell: bash
+        run: |
+          TRAJECTORY_FILE="./trajectories.json"
+          RESULTS_FILE="/tmp/openhands_results.json"
+          echo "RESULTS_FILE=${RESULTS_FILE}" >> $GITHUB_OUTPUT
+
+          if [ -f "$TRAJECTORY_FILE" ]; then
+            echo "🔍 Extracting results from $TRAJECTORY_FILE"
+            # trajectories.jsonから最後のfinishアクションを抽出
+            jq 'map(select(.action == "finish")) | .[-1] | {final_thought: .args.final_thought, llm_metrics: .llm_metrics}' "$TRAJECTORY_FILE" > "${RESULTS_FILE}"
+            echo "✅ Results saved to ${RESULTS_FILE}."
+            echo "📄 Extracted results:"
+            cat "${RESULTS_FILE}"
+          else
+            echo "⚠️ Trajectory file not found at $TRAJECTORY_FILE"
+            echo '{}' > "${RESULTS_FILE}"
+          fi
+
+      - name: Commit changes and create Pull Request
+        if: steps.openhands.outputs.HAS_CHANGES == 'true'
+        id: create_pr
+        shell: bash
+        run: |
+          echo "🔧 Committing changes and creating Pull Request..."
+          ISSUE_NUMBER="${{ steps.prepare.outputs.ISSUE_NUMBER }}"
+          BRANCH_NAME="${{ steps.prepare.outputs.BRANCH_NAME }}"
+          RESULTS_FILE="${{ steps.extract_results.outputs.RESULTS_FILE }}"
+          
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add .
+          git commit -m "🤖 OpenHands Simulator: Fix for issue #${ISSUE_NUMBER}"
+          git push origin "$BRANCH_NAME"
+          
+          # 結果ファイルから最終的な思考を取得
+          FINAL_THOUGHT=""
+          if [ -f "$RESULTS_FILE" ] && [ "$(jq 'length' "$RESULTS_FILE")" -gt 0 ]; then
+            FINAL_THOUGHT=$(jq -r '.final_thought' "$RESULTS_FILE")
+          fi
+          
+          # PR本文を作成
+          if [ -n "$FINAL_THOUGHT" ] && [ "$FINAL_THOUGHT" != "null" ]; then
+            PR_BODY="## 🤖 OpenHands Simulator による自動修正
+
+          $FINAL_THOUGHT
+
+          ---
+
+          **詳細情報**
+          - 対象Issue: #${ISSUE_NUMBER}
+          - 作業ブランチ: ${BRANCH_NAME}
+          - 処理方式: OpenHandsシミュレーター
+          - 自動生成日時: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          **注意**: これはOpenHandsの動作をシミュレートした結果です。"
+                    else
+                      PR_BODY="## 🤖 OpenHands Simulator による自動修正
+
+          Issue #${ISSUE_NUMBER} の修正をシミュレーション実行しました。
+
+          ---
+
+          **詳細情報**
+          - 対象Issue: #${ISSUE_NUMBER}
+          - 作業ブランチ: ${BRANCH_NAME}
+          - 処理方式: OpenHandsシミュレーター
+          - 自動生成日時: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          
+          **注意**: これはOpenHandsの動作をシミュレートした結果です。"
+          fi
+          
+          # jqを使って安全にJSONペイロードを生成
+          PR_PAYLOAD=$(jq -n \
+            --arg title "🤖 OpenHands Simulator: Fix for issue #${ISSUE_NUMBER}" \
+            --arg head "$BRANCH_NAME" \
+            --arg base "main" \
+            --arg body "$PR_BODY" \
+            '{title: $title, head: $head, base: $base, body: $body, draft: true}')
+
+          PR_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$PR_PAYLOAD" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls")
+          
+          RESPONSE_BODY=$(echo "$PR_RESPONSE" | sed '$d')
+          HTTP_CODE=$(echo "$PR_RESPONSE" | tail -n1)
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            PR_NUMBER=$(echo "$RESPONSE_BODY" | jq -r '.number')
+            echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_OUTPUT
+            echo "✅ PR created: #${PR_NUMBER}"
+          else
+            echo "❌ Failed to create PR. HTTP Status: $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+          fi
+
+      - name: Update status comment with completion
+        if: always()
+        shell: bash
+        run: |
+          echo "📝 Updating status comment with completion..."
+          
+          ISSUE_NUMBER="${{ steps.prepare.outputs.ISSUE_NUMBER }}"
+          HAS_CHANGES="${{ steps.openhands.outputs.HAS_CHANGES }}"
+          PR_NUMBER="${{ steps.create_pr.outputs.PR_NUMBER }}"
+          BRANCH_NAME="${{ steps.prepare.outputs.BRANCH_NAME }}"
+          COMMENT_ID="${{ steps.post_processing_comment.outputs.COMMENT_ID }}"
+          
+          # ステータスコメントを作成
+          if [ "$HAS_CHANGES" = "true" ] && [ -n "$PR_NUMBER" ]; then
+            COMMENT_HEADER="🎉 **OpenHands Simulator完了**
+
+          ドラフトPR **#${PR_NUMBER}** を作成しました。
+          作業ブランチ: \`${BRANCH_NAME}\`
+          
+          **注意**: これはOpenHandsの動作をシミュレートした結果です。"
+                    elif [ "$HAS_CHANGES" = "true" ]; then
+                      COMMENT_HEADER="⚠️ **OpenHands Simulatorが変更を作成しましたが、PR作成に失敗しました。**
+
+          作業ブランチ: \`${BRANCH_NAME}\`
+          
+          **注意**: これはOpenHandsの動作をシミュレートした結果です。"
+                    else
+                      COMMENT_HEADER="ℹ️ **OpenHands Simulatorを実行しましたが、変更は検出されませんでした。**
+
+          作業ブランチ: \`${BRANCH_NAME}\`
+          
+          **注意**: これはOpenHandsの動作をシミュレートした結果です。"
+          fi
+          
+          # jqを使って安全にJSONペイロードを生成
+          JSON_PAYLOAD=$(jq -n \
+            --arg body "$COMMENT_HEADER" \
+            '{body: $body}')
+          
+          # 処理中コメントを更新するか、新規作成するかを判定
+          if [ -n "$COMMENT_ID" ] && [ "$COMMENT_ID" != "" ]; then
+            echo "🔄 Updating existing comment ID: $COMMENT_ID"
+            curl -s -f -X PATCH \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" \
+              "${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${COMMENT_ID}" || echo "⚠️ Failed to update status comment."
+          else
+            echo "📝 Creating new status comment..."
+            curl -s -f -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_PAYLOAD" \
+              "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" || echo "⚠️ Failed to post status comment."
+          fi
+
+      - name: Post final thought comment
+        if: always()
+        shell: bash
+        run: |
+          echo "💭 Posting final thought comment..."
+          
+          ISSUE_NUMBER="${{ steps.prepare.outputs.ISSUE_NUMBER }}"
+          RESULTS_FILE="${{ steps.extract_results.outputs.RESULTS_FILE }}"
+          
+          # 結果ファイルから最終的な思考を取得
+          if [ -f "$RESULTS_FILE" ] && [ "$(jq 'length' "$RESULTS_FILE")" -gt 0 ]; then
+            FINAL_THOUGHT=$(jq -r '.final_thought' "$RESULTS_FILE")
+            
+            if [ -n "$FINAL_THOUGHT" ] && [ "$FINAL_THOUGHT" != "null" ]; then
+              COMMENT_BODY="
+            # 🧠 最終的な思考 (Simulator)
+
+            $FINAL_THOUGHT
+            
+            ---
+            **注意**: これはOpenHandsシミュレーターによる出力です。
+            "
+                            
+              # jqを使って安全にJSONペイロードを生成
+              JSON_PAYLOAD=$(jq -n \
+                --arg body "$COMMENT_BODY" \
+                '{body: $body}')
+              
+              curl -s -f -X POST \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "$JSON_PAYLOAD" \
+                "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" || echo "⚠️ Failed to post final thought comment."
+            else
+              echo "⚠️ Final thought is empty or null, skipping comment."
+            fi
+          else
+            echo "⚠️ Results file not found or empty, skipping final thought comment."
+          fi
+
+      - name: Post cost metrics comment
+        if: always()
+        shell: bash
+        run: |
+          echo "💰 Posting cost metrics comment..."
+          
+          ISSUE_NUMBER="${{ steps.prepare.outputs.ISSUE_NUMBER }}"
+          RESULTS_FILE="${{ steps.extract_results.outputs.RESULTS_FILE }}"
+          
+          # 結果ファイルからメトリクスを取得
+          if [ -f "$RESULTS_FILE" ] && [ "$(jq 'length' "$RESULTS_FILE")" -gt 0 ]; then
+            LLM_METRICS_JSON=$(jq '.llm_metrics' "$RESULTS_FILE")
+            
+            # メトリクスが存在するかチェック
+            if [ -n "$LLM_METRICS_JSON" ] && [ "$LLM_METRICS_JSON" != "null" ]; then
+              COST=$(echo "$LLM_METRICS_JSON" | jq -r '.accumulated_cost // "N/A"')
+              TOKEN_USAGE=$(echo "$LLM_METRICS_JSON" | jq -c '.accumulated_token_usage // {}')
+              
+              COMMENT_BODY="## 💰 実行コスト情報 (Simulator)
+
+            **総コスト**: \$${COST}
+
+            **トークン使用量**:
+            \`\`\`json
+            $TOKEN_USAGE
+            \`\`\`
+
+            **詳細メトリクス**:
+            \`\`\`json
+            $LLM_METRICS_JSON
+            \`\`\`
+            
+            ---
+            **注意**: これはシミュレーション用のサンプルデータです。
+              "
+              
+              # jqを使って安全にJSONペイロードを生成
+              JSON_PAYLOAD=$(jq -n \
+                --arg body "$COMMENT_BODY" \
+                '{body: $body}')
+              
+              curl -s -f -X POST \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Content-Type: application/json" \
+                -d "$JSON_PAYLOAD" \
+                "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" || echo "⚠️ Failed to post cost metrics comment."
+            else
+              echo "⚠️ LLM metrics not found or empty, skipping cost comment."
+            fi
+          else
+            echo "⚠️ Results file not found or empty, skipping cost comment."
+          fi
+
+      - name: Add completion reaction
+        if: always()
+        shell: bash
+        run: |
+          echo "🎯 Adding completion reaction..."
+          
+          HAS_CHANGES="${{ steps.openhands.outputs.HAS_CHANGES }}"
+          PR_NUMBER="${{ steps.create_pr.outputs.PR_NUMBER }}"
+          
+          if [ "$HAS_CHANGES" = "true" ] && [ -n "$PR_NUMBER" ]; then
+            REACTION_CONTENT="+1"
+          elif [ "$HAS_CHANGES" = "true" ]; then
+            REACTION_CONTENT="confused"
+          else
+            REACTION_CONTENT="-1"
+          fi
+          
+          case "${{ github.event_name }}" in
+            "issue_comment")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions"
+              ;;
+            "issues")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.issue.number }}/reactions"
+              ;;
+            "pull_request"|"pull_request_review"|"pull_request_review_comment")
+              REACTION_URL="${{ github.api_url }}/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/reactions"
+              ;;
+          esac
+          
+          if [ -n "$REACTION_URL" ]; then
+            curl -s -f -X POST \
+              -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"content\":\"${REACTION_CONTENT}\"}" \
+              "$REACTION_URL" || echo "⚠️ Failed to add reaction"
+            echo "✅ Added ${REACTION_CONTENT} reaction"
+          fi
