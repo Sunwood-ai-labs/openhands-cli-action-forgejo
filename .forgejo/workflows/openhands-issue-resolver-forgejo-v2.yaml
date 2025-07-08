@@ -181,6 +181,7 @@ jobs:
           # Dockerを使わずにローカルのコマンドラインで実行する設定
           runtime = "cli"
           workspace_base = "${CURRENT_DIR}"
+          save_trajectory_path = "/root/.openhands/trajectories.json"
           
           [llm]
           # モデル名を指定します。プロバイダー名（anthropic/）を含めてください。
