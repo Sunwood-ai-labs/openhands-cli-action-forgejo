@@ -1,4 +1,4 @@
-name: OpenHands Issue Resolver (forgejo)
+name: OpenHands Issue Resolver (forgejo V3)
 
 on:
   issues:
@@ -13,7 +13,7 @@ on:
     types: [submitted]
 
 jobs:
-  openhands-resolver:
+  openhands-resolver-v3:
     if: |
       github.event.label.name == 'fix-me' ||
       github.event.label.name == 'fix-me-experimental' ||
@@ -49,6 +49,7 @@ jobs:
         shell: bash
         run: |
           echo "🔧 Verifying pre-installed environment..."
+          # (内容は変更なし)
           echo "==========================================="
           echo "🐍 Python version: $(python --version)"
           echo "📦 Node.js version: $(node --version)"
@@ -82,7 +83,7 @@ jobs:
           esac
           
           if [ -n "$REACTION_URL" ]; then
-            curl -X POST \
+            curl -s -f -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d '{"content":"eyes"}' \
@@ -98,7 +99,6 @@ jobs:
         id: prepare
         shell: bash
         run: |
-          # Extract issue number and task content
           if [ -n "${{ github.event.pull_request.number }}" ]; then
             ISSUE_NUMBER="${{ github.event.pull_request.number }}"
             TASK_CONTENT="${{ github.event.pull_request.body }}"
@@ -111,35 +111,18 @@ jobs:
             fi
           fi
           
-          # Create work branch
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
           BRANCH_NAME="openhands/fix-issue-${ISSUE_NUMBER}-${TIMESTAMP}"
           
           echo "🌿 Creating work branch: $BRANCH_NAME"
           git checkout -b "$BRANCH_NAME"
           
-          # Debug: Current status
-          echo "🔍 DEBUG: Initial state after branch creation"
-          echo "==========================================="
-          echo "🔢 Issue number: $ISSUE_NUMBER"
-          echo "🌿 Branch name: $BRANCH_NAME"
-          echo "⏰ Timestamp: $TIMESTAMP"
-          echo "📁 Current directory: $(pwd)"
-          echo "📊 Git status:"
-          git status
-          echo "📋 Directory listing:"
-          ls -la
-          echo "🌿 Current branch: $(git branch --show-current)"
-          echo "==========================================="
-          
-          # Clean task content and add directory instruction
           CLEAN_TASK=$(echo "$TASK_CONTENT" | sed 's/@openhands-agent[^[:space:]]*//' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
           
           if [ -z "$CLEAN_TASK" ]; then
             CLEAN_TASK="Issue #${ISSUE_NUMBER}を解決してください。"
           fi
           
-          # Add directory instruction to task
           CURRENT_DIR=$(pwd)
           ENHANCED_TASK="${CLEAN_TASK}
 
@@ -147,7 +130,6 @@ jobs:
           
           echo "📝 Enhanced task: $ENHANCED_TASK"
           
-          # Save variables for next step
           echo "ISSUE_NUMBER=$ISSUE_NUMBER" >> $GITHUB_OUTPUT
           echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "ENHANCED_TASK<<EOF" >> $GITHUB_OUTPUT
@@ -159,70 +141,34 @@ jobs:
         shell: bash
         run: |
           echo "🚀 Running OpenHands..."
-          
-          # Get current directory and task from previous step
           CURRENT_DIR=$(pwd)
           ENHANCED_TASK="${{ steps.prepare.outputs.ENHANCED_TASK }}"
           
-          echo "🔍 DEBUG: Before OpenHands execution"
-          echo "==========================================="
-          echo "📁 Current directory: $CURRENT_DIR"
-          echo "📋 Directory listing:"
-          ls -la
-          echo "📊 Git status:"
-          git status
-          echo "🌿 Current branch: $(git branch --show-current)"
-          echo "📝 Task to execute: $ENHANCED_TASK"
-          echo "==========================================="
-          
-          # Create unified config.toml in current directory
+          mkdir -p /root/.openhands
           cat > /root/.openhands/config.toml << EOF
           [core]
-          # Dockerを使わずにローカルのコマンドラインで実行する設定
           runtime = "cli"
           workspace_base = "${CURRENT_DIR}"
           save_trajectory_path = "/root/.openhands/trajectories.json"
           
           [llm]
-          # モデル名を指定します。プロバイダー名（anthropic/）を含めてください。
           model = "${LLM_MODEL}"
-          
-          # APIキーを設定します。
           api_key = "${LITELLM_API_KEY}"
-          
-          # APIリクエストを送信するベースURLを指定します。
           base_url = "${LLM_BASE_URL}"
-          
-          # litellmがこのベースURLをOpenAI互換として扱うための設定
           custom_llm_provider = "${LLM_PROVIDER}"
-    
           EOF
           
-          echo "✅ Created unified config.toml:"
+          echo "✅ Created config.toml:"
           cat /root/.openhands/config.toml
           
-          # Run OpenHands with Python module syntax
-          echo "🏃 Executing OpenHands with enhanced task..."
           python -m openhands.core.main -t "$ENHANCED_TASK" --config-file /root/.openhands/config.toml
           
-          echo "🔍 DEBUG: After OpenHands execution"
-          echo "==========================================="
-          echo "📁 Current directory: $(pwd)"
-          echo "📋 Directory listing:"
-          ls -la
-          echo "📊 Git status:"
-          git status
-          echo "🌿 Current branch: $(git branch --show-current)"
-          echo "==========================================="
-          
-          # Check for changes
           if [ -n "$(git status --porcelain)" ]; then
             echo "HAS_CHANGES=true" >> $GITHUB_OUTPUT
-            echo "✅ Changes detected:"
-            git status --porcelain
+            echo "✅ Changes detected."
           else
             echo "HAS_CHANGES=false" >> $GITHUB_OUTPUT
-            echo "⚠️ No changes detected"
+            echo "⚠️ No changes detected."
           fi
         env:
           LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
@@ -232,65 +178,69 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAX_ITERATIONS: ${{ vars.MAX_ITERATIONS || '30' }}
 
+      - name: Extract OpenHands Results
+        id: extract_results
+        if: always()
+        shell: bash
+        run: |
+          TRAJECTORY_FILE="/root/.openhands/trajectories.json"
+          RESULTS_FILE="/tmp/openhands_results.json"
+          echo "RESULTS_FILE=${RESULTS_FILE}" >> $GITHUB_OUTPUT
+
+          if [ -f "$TRAJECTORY_FILE" ]; then
+            echo "🔍 Extracting results from $TRAJECTORY_FILE"
+            jq 'map(select(.action == "finish")) | .[-1] | {final_thought: .args.final_thought, llm_metrics: .llm_metrics}' "$TRAJECTORY_FILE" > "${RESULTS_FILE}"
+            echo "✅ Results saved to ${RESULTS_FILE}."
+          else
+            echo "⚠️ Trajectory file not found at $TRAJECTORY_FILE"
+            echo '{}' > "${RESULTS_FILE}"
+          fi
+
       - name: Commit changes and create Pull Request
         if: steps.openhands.outputs.HAS_CHANGES == 'true'
         id: create_pr
         shell: bash
         run: |
           echo "🔧 Committing changes and creating Pull Request..."
-          
           ISSUE_NUMBER="${{ steps.prepare.outputs.ISSUE_NUMBER }}"
           BRANCH_NAME="${{ steps.prepare.outputs.BRANCH_NAME }}"
           
-          echo "🔍 DEBUG: PR creation details"
-          echo "==========================================="
-          echo "🔢 Issue number: $ISSUE_NUMBER"
-          echo "🌿 Branch name: $BRANCH_NAME"
-          echo "📁 Current directory: $(pwd)"
-          echo "📊 Git status before commit:"
-          git status
-          echo "🔍 Changed files:"
-          git diff --name-only
-          echo "🌿 Current branch: $(git branch --show-current)"
-          echo "==========================================="
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Commit changes
           git add .
           git commit -m "🤖 OpenHands: Fix for issue #${ISSUE_NUMBER}"
-          
-          echo "🔍 DEBUG: After commit"
-          echo "==========================================="
-          echo "📊 Git status after commit:"
-          git status
-          echo "📋 Git log (last 2 commits):"
-          git log --oneline -2
-          echo "==========================================="
-          
-          # Push branch
           git push origin "$BRANCH_NAME"
           
-          echo "🔍 DEBUG: PR API call"
-          echo "==========================================="
-          PR_PAYLOAD="{\"title\":\"🤖 OpenHands: Fix for issue #${ISSUE_NUMBER}\",\"head\":\"${BRANCH_NAME}\",\"base\":\"main\",\"body\":\"🤖 OpenHands による自動修正\\n\\n対象Issue: #${ISSUE_NUMBER}\\n作業ブランチ: ${BRANCH_NAME}\",\"draft\":true}"
-          echo "📋 PR payload: $PR_PAYLOAD"
-          echo "🔗 API URL: ${{ github.api_url }}/repos/${{ github.repository }}/pulls"
-          echo "==========================================="
+          PR_BODY="🤖 OpenHands による自動修正
+
+          対象Issue: #${ISSUE_NUMBER}
+          作業ブランチ: ${BRANCH_NAME}"
           
-          # Create PR
-          curl -X POST \
+          PR_PAYLOAD=$(jq -n \
+            --arg title "🤖 OpenHands: Fix for issue #${ISSUE_NUMBER}" \
+            --arg head "$BRANCH_NAME" \
+            --arg base "main" \
+            --arg body "$PR_BODY" \
+            '{title: $title, head: $head, base: $base, body: $body, draft: true}')
+
+          PR_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "$PR_PAYLOAD" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/pulls" > pr_response.json
+            "${{ github.api_url }}/repos/${{ github.repository }}/pulls")
           
-          echo "🔍 DEBUG: PR response"
-          echo "==========================================="
-          cat pr_response.json
-          echo "==========================================="
-          
-          PR_NUMBER=$(grep -o '"number":[0-9]*' pr_response.json | cut -d':' -f2 | head -1)
-          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_OUTPUT
-          echo "✅ PR created: #${PR_NUMBER}"
+          RESPONSE_BODY=$(echo "$PR_RESPONSE" | sed '$d')
+          HTTP_CODE=$(echo "$PR_RESPONSE" | tail -n1)
+
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            PR_NUMBER=$(echo "$RESPONSE_BODY" | jq -r '.number')
+            echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_OUTPUT
+            echo "✅ PR created: #${PR_NUMBER}"
+          else
+            echo "❌ Failed to create PR. HTTP Status: $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+          fi
 
       - name: Post results
         if: always()
@@ -302,30 +252,36 @@ jobs:
           HAS_CHANGES="${{ steps.openhands.outputs.HAS_CHANGES }}"
           PR_NUMBER="${{ steps.create_pr.outputs.PR_NUMBER }}"
           BRANCH_NAME="${{ steps.prepare.outputs.BRANCH_NAME }}"
-          
-          echo "🔍 DEBUG: Final results"
-          echo "==========================================="
-          echo "🔢 Issue number: $ISSUE_NUMBER"
-          echo "🔄 Has changes: $HAS_CHANGES"
-          echo "🔗 PR number: $PR_NUMBER"
-          echo "🌿 Branch name: $BRANCH_NAME"
-          echo "==========================================="
+          RESULTS_FILE="${{ steps.extract_results.outputs.RESULTS_FILE }}"
           
           if [ "$HAS_CHANGES" = "true" ] && [ -n "$PR_NUMBER" ]; then
-            COMMENT_BODY="🎉 OpenHands完了！ドラフトPR #${PR_NUMBER} を作成しました。\\n\\n作業ブランチ: \`${BRANCH_NAME}\`"
+            COMMENT_HEADER="🎉 **OpenHands完了**\n\nドラフトPR **#${PR_NUMBER}** を作成しました。\n作業ブランチ: \`${BRANCH_NAME}\`"
           elif [ "$HAS_CHANGES" = "true" ]; then
-            COMMENT_BODY="🎉 OpenHandsが変更を作成しましたが、PR作成に失敗しました。\\n\\n作業ブランチ: \`${BRANCH_NAME}\`"
+            COMMENT_HEADER="⚠️ **OpenHandsが変更を作成しましたが、PR作成に失敗しました。**\n\n作業ブランチ: \`${BRANCH_NAME}\`"
           else
-            COMMENT_BODY="⚠️ OpenHandsを実行しましたが、変更は検出されませんでした。\\n\\n作業ブランチ: \`${BRANCH_NAME}\`"
+            COMMENT_HEADER="ℹ️ **OpenHandsを実行しましたが、変更は検出されませんでした。**\n\n作業ブランチ: \`${BRANCH_NAME}\`"
           fi
           
-          echo "💬 Comment to post: $COMMENT_BODY"
+          COMMENT_BODY="$COMMENT_HEADER"
+
+          if [ -f "$RESULTS_FILE" ] && [ "$(jq 'length' "$RESULTS_FILE")" -gt 0 ]; then
+              FINAL_THOUGHT=$(jq -r '.final_thought' "$RESULTS_FILE")
+              LLM_METRICS=$(jq '.llm_metrics' "$RESULTS_FILE")
+
+              COMMENT_BODY+="\n\n---\n\n### 最終的な思考 (final_thought)\n\`\`\`text\n${FINAL_THOUGHT}\n\`\`\`"
+              COMMENT_BODY+="\n\n### LLMメトリクス (llm_metrics)\n\`\`\`json\n${LLM_METRICS}\n\`\`\`"
+          fi
           
-          curl -X POST \
+          JSON_PAYLOAD=$(jq -n --arg body "$COMMENT_BODY" '{body: $body}')
+          
+          echo "💬 Comment to post:"
+          echo "$JSON_PAYLOAD"
+          
+          curl -s -f -X POST \
             -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{\"body\":\"${COMMENT_BODY}\"}" \
-            "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments"
+            -d "$JSON_PAYLOAD" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/issues/${ISSUE_NUMBER}/comments" || echo "⚠️ Failed to post comment."
 
       - name: Add completion reaction
         if: always()
@@ -357,7 +313,7 @@ jobs:
           esac
           
           if [ -n "$REACTION_URL" ]; then
-            curl -X POST \
+            curl -s -f -X POST \
               -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               -H "Content-Type: application/json" \
               -d "{\"content\":\"${REACTION_CONTENT}\"}" \
