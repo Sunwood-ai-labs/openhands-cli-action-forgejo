@@ -1,2 +1,21 @@
 [sandbox]
 trusted_dirs = [ "/workspace", "/prj", "/home", "/tmp", "/app" ]
+
+[core]
+# Dockerを使わずにローカルのコマンドラインで実行する設定
+runtime = "cli"
+workspace_base = "/workspace"
+save_trajectory_path = "/root/.openhands/trajectories.json"
+
+[llm]
+# モデル名を指定します。プロバイダー名（anthropic/）を含めてください。
+model = "openai/claude-sonnet-4-20250514"
+
+# APIキーを設定します。
+api_key = "sk-XXXXX"
+
+# APIリクエストを送信するベースURLを指定します。
+base_url = "http://192.168.0.121:4001"
+
+# litellmがこのベースURLをOpenAI互換として扱うための設定
+custom_llm_provider = "openai"

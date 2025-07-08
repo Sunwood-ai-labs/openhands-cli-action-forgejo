@@ -9,3 +9,6 @@ test.txt
 
 .openhands/config.toml
 workspace/config.toml
+.openhands/config.toml
+workspace/
+memo.md
