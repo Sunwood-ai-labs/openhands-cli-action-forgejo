@@ -12,3 +12,5 @@ workspace/config.toml
 .openhands/config.toml
 workspace/
 memo.md
+
+!workspace/trajectories.json
