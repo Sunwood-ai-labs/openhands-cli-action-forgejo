@@ -149,6 +149,16 @@ docker-compose exec oh-cli-dev openhands -t "Create a file called test.txt with 
 
 ---
 
+## 📚 使用例とデモ
+
+詳細な使用例とデモ環境については、[example/README.md](example/README.md)を参照してください。
+
+- **oh-cli/**: カスタムDockerfileによる開発環境
+- **oh-docker/**: 公式Dockerイメージを使用した環境  
+- **oh-cicd/**: Forgejo Actions環境シミュレーション
+
+---
+
 ## 🛠️ カスタマイズ
 
 - **モデル変更**: ワークフロー内`LLM_MODEL`変数でClaudeモデル指定可
