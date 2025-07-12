@@ -1,0 +1,29 @@
+[sandbox]
+
+user_id = 1000
+
+# このセクションは変更ありません
+runtime_container_image = "docker.all-hands.dev/all-hands-ai/runtime:0.48-nikolaik"
+use_host_network = false
+trusted_dirs = ["/workspace", "/prj", "/home", "/tmp", "/app", "/opt/workspace_base"]
+volumes = "/app/workspace:/workspace:rw"
+
+[core]
+runtime = "docker"
+save_trajectory_path = "/root/.openhands/trajectories.json"
+debug = true
+# default_agent = "CodeActAgent"
+# 以下の行を削除またはコメントアウトします
+# workspace_mount_path = "/opt/workspace_base"
+workspace_base = "/workspace"
+
+[llm]
+# このセクションはdocker-compose.ymlで設定するため、すべて削除またはコメントアウトします
+model = "openai/claude-sonnet-4-20250514"
+api_key = "sk-4XpD0aWTox5PE-iAdVWXDQ"
+base_url = "http://192.168.0.121:4001"
+custom_llm_provider = "openai"
+timeout = 300
+
+[agent]
+# このセクションは空のままで問題ありません

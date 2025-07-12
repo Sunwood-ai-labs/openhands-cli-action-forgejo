@@ -1,0 +1,17 @@
+[sandbox]
+user_id = 1000
+runtime_container_image = "docker.all-hands.dev/all-hands-ai/runtime:0.48-nikolaik"
+use_host_network = false
+trusted_dirs = ["/workspace", "/prj", "/home", "/tmp", "/app", "/opt/workspace_base"]
+
+[core]
+runtime = "docker"
+save_trajectory_path = "/root/.openhands/trajectories.json"
+debug = true
+default_agent = "CodeActAgent"
+
+[llm]
+# 環境変数から読み込まれるため、設定は削除
+
+[agent]
+# 空のセクション

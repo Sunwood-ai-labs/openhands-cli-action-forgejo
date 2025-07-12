@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  oh-cli-dev:
+    build: .
+    volumes:
+      - ./:/app
+      - .openhands/config.toml:/root/.openhands/config.toml
+      - ./workspace:/workspace
+    environment:
+      - DEBUG=true
+    tty: true
+    working_dir: /workspace
+    env_file:
+      - .env
