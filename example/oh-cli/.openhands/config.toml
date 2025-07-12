@@ -11,8 +11,9 @@ save_trajectory_path = "/root/.openhands/trajectories.json"
 # モデル名を指定します。プロバイダー名（anthropic/）を含めてください。
 model = "openai/claude-sonnet-4-20250514"
 
+
 # APIキーを設定します。
-api_key = "sk-XXXXX"
+api_key = "sk-4XpD0aWTox5PE-iAdVWXDQ"
 
 # APIリクエストを送信するベースURLを指定します。
 base_url = "http://192.168.0.121:4001"

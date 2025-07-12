@@ -4,10 +4,11 @@ services:
     build: .
     volumes:
       - ./:/app
-      # - .openhands/settings.json:/root/.openhands/settings.json
       - .openhands/config.toml:/root/.openhands/config.toml
       - ./workspace:/workspace
     environment:
       - DEBUG=true
     tty: true
     working_dir: /workspace
+    env_file:
+      - .env
